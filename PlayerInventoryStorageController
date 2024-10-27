@@ -1,0 +1,172 @@
+-- PlayerInventoryStorageController.lua
+-- Malik Allen LLC, Roblox Studio Pro GPT
+
+local Player = game.Players.LocalPlayer
+
+-- References to UI elements within PlayerInventoryStorage
+local InventorySlots = script.Parent.InventorySlots
+local InfoPanel = script.Parent.InfoPanel
+local PutAwayButton = InfoPanel:WaitForChild("PutAwayButton")
+local NextArrow = script.Parent.NextArrow
+local PreviousArrow = script.Parent.PreviousArrow
+local PageIndicator = script.Parent.PageIndicator
+local SpaceCount = script.Parent.SpaceCount
+local InfoDescription = InfoPanel.Description
+local InfoItemName = InfoPanel.ItemName
+
+-- Modules and Events
+local MasterFolder = game.ReplicatedStorage.InventorySystem
+local ItemDB = require(MasterFolder.Modules.ItemData)
+local Events = MasterFolder.Events
+local UpdateStorageUIEvent = Events.ServerClient.UpdateStorageUI
+local AddToStorageEvent = Events.ClientServer.AddToStorage
+
+-- Static
+local SlotCount = 9
+
+-- Tracking Variables
+local CurrentInventoryItems = {}
+local CurrentPages = {}
+local CurrentSelectedPage = 1
+local CurrentSelectedItem = nil
+
+-- Function to paginate inventory items
+local function GetPages(items)
+    local pages = {}
+    local currentPage = 1
+
+    for i, item in ipairs(items) do
+        if not pages[currentPage] then
+            pages[currentPage] = {}
+        end
+
+        if #pages[currentPage] < SlotCount then
+            table.insert(pages[currentPage], item)
+        end
+
+        if #pages[currentPage] >= SlotCount then
+            currentPage += 1
+        end
+    end
+    return pages
+end
+
+-- Function to update inventory display based on the current page
+local function UpdateInventoryDisplay()
+    local page = CurrentPages[CurrentSelectedPage] or {}
+
+    -- Clear item selection when updating the page display
+    UpdateInfoPanel(nil)
+
+    for i, slot in ipairs(InventorySlots:GetChildren()) do
+        slot:SetAttribute("CurrentItem", nil)
+        slot.Image = ""
+        slot.ImageColor3 = Color3.new(1, 1, 1)
+
+        local itemName = page[i]
+        if itemName then
+            local itemInfo = ItemDB.Items[itemName]
+            if itemInfo then
+                slot:SetAttribute("CurrentItem", itemName)
+                slot.Image = itemInfo.Image
+            end
+        end
+    end
+    PageIndicator.Text = string.format("Page %d of %d", CurrentSelectedPage, #CurrentPages)
+end
+
+-- Function to update inventory items and display
+local function UpdateInventoryItems(items)
+    CurrentInventoryItems = items
+    CurrentPages = GetPages(items)
+    CurrentSelectedPage = 1
+    UpdateInventoryDisplay()
+end
+
+-- Update space count display
+local function UpdateSpaceCount()
+    local playerBagSpace = Player:GetAttribute("BagSpace") or 0
+    SpaceCount.Text = string.format("%d / %d", #CurrentInventoryItems, playerBagSpace)
+end
+
+Player:GetAttributeChangedSignal("BagSpace"):Connect(UpdateSpaceCount)
+
+-- Update the info panel for the selected item
+local function UpdateInfoPanel(selectedSlot)
+    -- Clear current selection visuals and reset InfoPanel if no item is selected
+    if CurrentSelectedItem then
+        CurrentSelectedItem.ImageColor3 = Color3.new(1, 1, 1)
+    end
+
+    CurrentSelectedItem = selectedSlot
+
+    if CurrentSelectedItem then
+        CurrentSelectedItem.ImageColor3 = Color3.new(1, 0, 0.0156863) -- Highlight selected item in red
+        local itemName = CurrentSelectedItem:GetAttribute("CurrentItem")
+        
+        if itemName then
+            local itemInfo = ItemDB.Items[itemName]
+            InfoPanel.Visible = true
+            InfoItemName.Text = itemName
+            InfoDescription.Text = itemInfo.Description or "No Description Available"
+            
+            -- Customize description based on item type
+            if itemInfo.Type == "Wearable" then
+                InfoDescription.Text = string.format("<i>%s</i>\n<b><br />Health: %d<br />Speed: %d</b>", itemInfo.Description, itemInfo.Health or 0, itemInfo.Speed or 0)
+            elseif itemInfo.Type == "Tool" then
+                InfoDescription.Text = string.format("<i>%s</i>\n<b><br />Damage: %d</b>", itemInfo.Description, itemInfo.Damage or 0)
+            elseif itemInfo.Type == "Food" then
+                InfoDescription.Text = string.format("<i>%s</i>\n<b><br />+%d Health</b>", itemInfo.Description, itemInfo.HealthAmount or 0)
+            elseif itemInfo.Type == "Drink" then
+                InfoDescription.Text = string.format("<i>%s</i>\n<b><br />+%d Speed<br />Duration: %d seconds</b>", itemInfo.Description, itemInfo.SpeedBoost or 0, itemInfo.EffectDuration or 0)
+            end
+
+            -- Make sure PutAwayButton is visible for interaction
+            PutAwayButton.Visible = true
+        else
+            InfoPanel.Visible = false
+        end
+    else
+        -- Hide InfoPanel and clear item details when no item is selected
+        InfoPanel.Visible = false
+        InfoItemName.Text = ""
+        InfoDescription.Text = ""
+        PutAwayButton.Visible = false
+    end
+end
+
+-- Handle page navigation
+NextArrow.MouseButton1Click:Connect(function()
+    if CurrentPages[CurrentSelectedPage + 1] then
+        CurrentSelectedPage += 1
+        UpdateInventoryDisplay()
+    end
+end)
+
+PreviousArrow.MouseButton1Click:Connect(function()
+    if CurrentSelectedPage > 1 then
+        CurrentSelectedPage -= 1
+        UpdateInventoryDisplay()
+    end
+end)
+
+-- Load and display inventory data from server
+UpdateStorageUIEvent.OnClientEvent:Connect(function(data)
+    UpdateInventoryItems(data.Inventory or {})
+    UpdateSpaceCount()
+end)
+
+-- Handle item selection and display item info in the InfoPanel
+for _, slot in ipairs(InventorySlots:GetChildren()) do
+    slot.MouseButton1Click:Connect(function()
+        UpdateInfoPanel(slot)
+    end)
+end
+
+-- Handle "Put Away" button click
+PutAwayButton.MouseButton1Click:Connect(function()
+    if CurrentSelectedItem and CurrentSelectedItem:GetAttribute("CurrentItem") then
+        local selectedItemName = CurrentSelectedItem:GetAttribute("CurrentItem")
+        AddToStorageEvent:FireServer(selectedItemName, 1)
+    end
+end)
