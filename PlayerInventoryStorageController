@@ -30,6 +30,9 @@ local CurrentPages = {}
 local CurrentSelectedPage = 1
 local CurrentSelectedItem = nil
 
+-- Set InfoPanel initially to be hidden
+InfoPanel.Visible = false
+
 -- Function to paginate inventory items
 local function GetPages(items)
     local pages = {}
@@ -54,9 +57,6 @@ end
 -- Function to update inventory display based on the current page
 local function UpdateInventoryDisplay()
     local page = CurrentPages[CurrentSelectedPage] or {}
-
-    -- Clear item selection when updating the page display
-    UpdateInfoPanel(nil)
 
     for i, slot in ipairs(InventorySlots:GetChildren()) do
         slot:SetAttribute("CurrentItem", nil)
@@ -93,7 +93,6 @@ Player:GetAttributeChangedSignal("BagSpace"):Connect(UpdateSpaceCount)
 
 -- Update the info panel for the selected item
 local function UpdateInfoPanel(selectedSlot)
-    -- Clear current selection visuals and reset InfoPanel if no item is selected
     if CurrentSelectedItem then
         CurrentSelectedItem.ImageColor3 = Color3.new(1, 1, 1)
     end
@@ -106,7 +105,7 @@ local function UpdateInfoPanel(selectedSlot)
         
         if itemName then
             local itemInfo = ItemDB.Items[itemName]
-            InfoPanel.Visible = true
+            InfoPanel.Visible = true -- Make InfoPanel visible only when an item is selected
             InfoItemName.Text = itemName
             InfoDescription.Text = itemInfo.Description or "No Description Available"
             
@@ -127,11 +126,7 @@ local function UpdateInfoPanel(selectedSlot)
             InfoPanel.Visible = false
         end
     else
-        -- Hide InfoPanel and clear item details when no item is selected
         InfoPanel.Visible = false
-        InfoItemName.Text = ""
-        InfoDescription.Text = ""
-        PutAwayButton.Visible = false
     end
 end
 
@@ -140,6 +135,7 @@ NextArrow.MouseButton1Click:Connect(function()
     if CurrentPages[CurrentSelectedPage + 1] then
         CurrentSelectedPage += 1
         UpdateInventoryDisplay()
+        UpdateInfoPanel(nil) -- Clear selection when page changes
     end
 end)
 
@@ -147,6 +143,7 @@ PreviousArrow.MouseButton1Click:Connect(function()
     if CurrentSelectedPage > 1 then
         CurrentSelectedPage -= 1
         UpdateInventoryDisplay()
+        UpdateInfoPanel(nil) -- Clear selection when page changes
     end
 end)
 
