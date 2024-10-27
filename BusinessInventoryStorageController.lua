@@ -2,156 +2,150 @@
 -- Malik Allen LLC, Roblox Studio Pro GPT
 
 local Player = game.Players.LocalPlayer
-local MasterFolder = game.ReplicatedStorage.InventorySystem
 
--- UI Elements
+-- References to UI elements within BusinessInventoryStorage
 local StorageSlots = script.Parent.InventorySlots
 local InfoPanel = script.Parent.InfoPanel
-local NextArrow = script.Parent.NextArrow
-local PreviousArrow = script.Parent.PreviousArrow
-local PageIndicator = script.Parent.PageIndicator
-local SpaceCount = script.Parent.SpaceCount
-local TakeButton = InfoPanel.TakeButton
-local InfoDescription = InfoPanel.Description
-local InfoItemName = InfoPanel.ItemName
+local TakeButton = InfoPanel:WaitForChild("TakeButton")
+local NextArrow = script.Parent:WaitForChild("NextArrow")
+local PreviousArrow = script.Parent:WaitForChild("PreviousArrow")
+local PageIndicator = script.Parent:WaitForChild("PageIndicator")
+local SpaceCount = script.Parent:WaitForChild("SpaceCount")
+local InfoDescription = InfoPanel:WaitForChild("Description")
+local InfoItemName = InfoPanel:WaitForChild("ItemName")
 
--- Events
-local Events = MasterFolder.Events
-local RemoveFromStorageEvent = Events.ClientServer.RemoveFromStorage -- Event to remove items from storage
-
--- Modules
+-- Modules and Events
+local MasterFolder = game.ReplicatedStorage.InventorySystem
 local ItemDB = require(MasterFolder.Modules.ItemData)
+local Events = MasterFolder.Events
+local UpdateStorageUIEvent = Events.ServerClient.UpdateStorageUI
+local RemoveFromStorageEvent = Events.ClientServer.RemoveFromStorage
+local LoadPlayerDataEvent = game.ReplicatedStorage.PlayerDataSystem.Events.ServerClient.LoadData
 
 -- Static
 local SlotCount = 9
 
--- Tracking
+-- Tracking Variables
 local CurrentStorageItems = {}
 local CurrentPages = {}
 local CurrentSelectedPage = 1
 local CurrentSelectedItem = nil
 
--- Organize items into pages for display
-function GetPages(Items)
-    local Pages = {}
-    local CurrentPage = 1
-    for i, Item in ipairs(Items) do
-        if not Pages[CurrentPage] then Pages[CurrentPage] = {} end
-        if #Pages[CurrentPage] < SlotCount then
-            table.insert(Pages[CurrentPage], Item)
-        end
-        if #Pages[CurrentPage] >= SlotCount then
-            CurrentPage += 1
-        end
-    end
-    return Pages
+InfoPanel.Visible = false  -- Set InfoPanel initially to be hidden
+
+local function GetPages(items)
+	local pages = {}
+	local currentPage = 1
+	for i, item in ipairs(items) do
+		if not pages[currentPage] then
+			pages[currentPage] = {}
+		end
+		if #pages[currentPage] < SlotCount then
+			table.insert(pages[currentPage], item)
+		end
+		if #pages[currentPage] >= SlotCount then
+			currentPage += 1
+		end
+	end
+	return pages
 end
 
--- Update the space count in storage
-function UpdateSpaceCount()
-    local StorageSpace = #CurrentStorageItems
-    SpaceCount.Text = string.format("%d / %d", StorageSpace, 50) -- Assuming max storage space is 50
+local function UpdateStorageDisplay()
+	local page = CurrentPages[CurrentSelectedPage] or {}
+	for i, slot in ipairs(StorageSlots:GetChildren()) do
+		slot:SetAttribute("CurrentItem", nil)
+		slot.Image = ""
+		slot.ImageColor3 = Color3.new(1, 1, 1)
+		local itemName = page[i]
+		if itemName then
+			local itemInfo = ItemDB.Items[itemName]
+			if itemInfo then
+				slot:SetAttribute("CurrentItem", itemName)
+				slot.Image = itemInfo.Image
+			end
+		end
+	end
+	PageIndicator.Text = string.format("Page %d of %d", CurrentSelectedPage, #CurrentPages)
 end
 
--- Select and display items from a specific page
-function SelectPage(PageNumber)
-    local Page = CurrentPages[PageNumber] or {}
-
-    -- Clear item selection when updating the page display
-    UpdateInfoPanel(nil)
-
-    for i, Item in ipairs(StorageSlots:GetChildren()) do
-        Item:SetAttribute("CurrentItem", nil)
-        Item.Image = ""
-        Item.ImageColor3 = Color3.new(1, 1, 1)
-
-        local PageItem = Page[i]
-        if not PageItem then continue end
-
-        local ItemInfo = ItemDB.Items[PageItem]
-        if not ItemInfo then continue end
-
-        Item:SetAttribute("CurrentItem", PageItem)
-        Item.Image = ItemInfo["Image"]
-    end
-
-    CurrentSelectedPage = PageNumber
-    PageIndicator.Text = string.format("Page %d Of %d", PageNumber, #CurrentPages)
+local function UpdateStorageItems(items)
+	CurrentStorageItems = items
+	CurrentPages = GetPages(items)
+	CurrentSelectedPage = 1
+	UpdateStorageDisplay()
 end
 
--- Switch between pages
-function MoveToPage(ByValue)
-    local TargetNumber = CurrentSelectedPage + ByValue
-    if CurrentPages[TargetNumber] then
-        SelectPage(TargetNumber)
-        UpdateInfoPanel(CurrentSelectedItem)
-    end
+local function UpdateSpaceCount()
+	local businessStorageCapacity = 20 -- Adjust based on actual capacity
+	SpaceCount.Text = string.format("%d / %d", #CurrentStorageItems, businessStorageCapacity)
 end
 
--- Update the storage items when there's a change
-function UpdateStorageItems(Items)
-    CurrentStorageItems = Items
-    CurrentPages = GetPages(Items)
-    SelectPage(1)
-    UpdateSpaceCount()
+local function UpdateInfoPanel(selectedSlot)
+	if CurrentSelectedItem then
+		CurrentSelectedItem.ImageColor3 = Color3.new(1, 1, 1)
+	end
+	CurrentSelectedItem = selectedSlot
+	if CurrentSelectedItem then
+		CurrentSelectedItem.ImageColor3 = Color3.new(1, 0, 0.0156863)
+		local itemName = CurrentSelectedItem:GetAttribute("CurrentItem")
+		if itemName then
+			local itemInfo = ItemDB.Items[itemName]
+			InfoPanel.Visible = true
+			InfoItemName.Text = itemName
+			InfoDescription.Text = itemInfo.Description or "No Description Available"
+			TakeButton.Visible = true
+		else
+			InfoPanel.Visible = false
+		end
+	else
+		InfoPanel.Visible = false
+	end
 end
 
--- Update the info panel for the selected item
-function UpdateInfoPanel(Item)
-    if CurrentSelectedItem then
-        CurrentSelectedItem.ImageColor3 = Color3.new(1, 1, 1)
-    end
-
-    CurrentSelectedItem = Item
-
-    if CurrentSelectedItem then
-        CurrentSelectedItem.ImageColor3 = Color3.new(1, 0, 0.0156863)
-    end
-
-    local ItemName = (CurrentSelectedItem and CurrentSelectedItem:GetAttribute("CurrentItem")) or nil
-
-    if not ItemName then
-        InfoPanel.Visible = false -- Hide InfoPanel if no item is selected
-        return
-    end
-
-    -- Display item information if an item is selected
-    InfoPanel.Visible = true
-    local ItemInfo = ItemDB.Items[ItemName]
-    InfoItemName.Text = ItemName
-    InfoDescription.Text = ItemInfo["Description"] or "No Description Available"
-
-    -- Customize description based on item type
-    if ItemInfo["Type"] == "Wearable" then
-        InfoDescription.Text = string.format("<i>%s</i>\n<b><br />Health: %d<br />Speed: %d</b>", ItemInfo["Description"], ItemInfo["Health"] or 0, ItemInfo["Speed"] or 0)
-    elseif ItemInfo["Type"] == "Tool" then
-        InfoDescription.Text = string.format("<i>%s</i>\n<b><br />Damage: %d</b>", ItemInfo["Description"], ItemInfo["Damage"] or 0)
-    elseif ItemInfo["Type"] == "Food" then
-        InfoDescription.Text = string.format("<i>%s</i>\n<b><br />+%d Health</b>", ItemInfo["Description"], ItemInfo["HealthAmount"] or 0)
-    elseif ItemInfo["Type"] == "Drink" then
-        InfoDescription.Text = string.format("<i>%s</i>\n<b><br />+%d Speed<br />Duration: %d seconds</b>", ItemInfo["Description"], ItemInfo["SpeedBoost"] or 0, ItemInfo["EffectDuration"] or 0)
-    end
-end
-
--- Select an item from the storage inventory
-for _, Item in ipairs(StorageSlots:GetChildren()) do
-    Item.MouseButton1Click:Connect(function()
-        UpdateInfoPanel(Item)
-    end)
-end
-
--- Handle the Take action to move an item to the player's inventory
-TakeButton.MouseButton1Click:Connect(function()
-    if not CurrentSelectedItem or not CurrentSelectedItem:GetAttribute("CurrentItem") then return end
-    local itemName = CurrentSelectedItem:GetAttribute("CurrentItem")
-    RemoveFromStorageEvent:FireServer(itemName, 1) -- Move item to player inventory
+NextArrow.MouseButton1Click:Connect(function()
+	if CurrentPages[CurrentSelectedPage + 1] then
+		CurrentSelectedPage += 1
+		UpdateStorageDisplay()
+		UpdateInfoPanel(nil) -- Clear selection when page changes
+	end
 end)
 
--- Navigation buttons for next/previous pages
-NextArrow.MouseButton1Click:Connect(function() MoveToPage(1) end)
-PreviousArrow.MouseButton1Click:Connect(function() MoveToPage(-1) end)
+PreviousArrow.MouseButton1Click:Connect(function()
+	if CurrentSelectedPage > 1 then
+		CurrentSelectedPage -= 1
+		UpdateStorageDisplay()
+		UpdateInfoPanel(nil) -- Clear selection when page changes
+	end
+end)
 
--- Event listener to update storage items
-Events.ServerClient.UpdateStorageUI.OnClientEvent:Connect(function(data)
-    UpdateStorageItems(data.Inventory or {})
+-- Loading data from server specifically for BusinessInventory
+LoadPlayerDataEvent.OnClientEvent:Connect(function(data)
+	UpdateStorageItems(data.BusinessInventory or {}) -- Ensure we're only loading BusinessInventory data
+	UpdateSpaceCount()
+end)
+
+UpdateStorageUIEvent.OnClientEvent:Connect(function(data)
+	UpdateStorageItems(data.Storage or {})
+	UpdateSpaceCount()
+end)
+
+for _, slot in ipairs(StorageSlots:GetChildren()) do
+	slot.MouseButton1Click:Connect(function()
+		UpdateInfoPanel(slot)
+	end)
+end
+
+TakeButton.MouseButton1Click:Connect(function()
+	if CurrentSelectedItem and CurrentSelectedItem:GetAttribute("CurrentItem") then
+		local selectedItemName = CurrentSelectedItem:GetAttribute("CurrentItem")
+		RemoveFromStorageEvent:FireServer(selectedItemName, 1)
+		for i, item in ipairs(CurrentStorageItems) do
+			if item == selectedItemName then
+				table.remove(CurrentStorageItems, i)
+				break
+			end
+		end
+		UpdateStorageItems(CurrentStorageItems)
+		UpdateInfoPanel(nil) -- Clear selection after taking item
+	end
 end)
