@@ -1,0 +1,210 @@
+-- StorageMaster.lua
+-- Malik Allen LLC, Roblox Studio Pro GPT
+
+-- Services
+local MasterFolder = game.ReplicatedStorage.InventorySystem
+local DataStoreService = game:GetService("DataStoreService")
+local StorageDataStore = DataStoreService:GetDataStore("PlayerStorageData")
+local PlayerDataStore = DataStoreService:GetDataStore("PlayerData") -- DataStore for saving player inventory
+local RunService = game:GetService("RunService")
+
+-- Storage part reference
+local StoragePart = game.Workspace.FirstMap.Cafe.Storage.StoragePart
+
+-- Events
+local Events = MasterFolder.Events
+local UpdateStorageUIEvent = Events.ServerClient.UpdateStorageUI
+local AddToStorageEvent = Events.ClientServer.AddToStorage
+local RemoveFromStorageEvent = Events.ClientServer.RemoveFromStorage
+
+local MessageEvent = game.ReplicatedStorage.NotificationSystem.Events.ServerClient.SendMessage
+local RequestDataEvent = game.ReplicatedStorage.PlayerDataSystem.Events.ServerServer.RequestPlayerData
+local ModifyDataEvent = game.ReplicatedStorage.PlayerDataSystem.Events.ServerServer.ModifyPlayerData
+
+-- Modules
+local ItemDB = require(MasterFolder.Modules.ItemData)
+
+-- Static
+local MaxStorageSpace = 50
+local MaxDistance = 5
+local storageOpen = false
+
+-- Save the player’s inventory and storage to the DataStore
+local function SavePlayerData(player, inventory, storage)
+	local success, err = pcall(function()
+		PlayerDataStore:SetAsync(player.UserId .. "_Inventory", inventory)
+		PlayerDataStore:SetAsync(player.UserId .. "_Storage", storage)
+	end)
+	if success then
+		print("Player data saved successfully for:", player.Name)
+	else
+		warn("Failed to save player data:", err)
+	end
+end
+
+-- Utility function to get the amount of an item in a given inventory
+local function GetAmount(Inventory, ItemName)
+	local Count = 0
+	for _, Item in ipairs(Inventory) do
+		if Item == ItemName then
+			Count += 1
+		end
+	end
+	return Count
+end
+
+-- Function to open the storage UI and close player inventory UI if open
+local function OpenStorageUI(player)
+	local playerGui = player:WaitForChild("PlayerGui")
+	local menusFolder = playerGui:WaitForChild("Menues")
+	local businessStorageFrame = menusFolder:WaitForChild("BusinessStorage")
+	local playerInventoryFrame = menusFolder:FindFirstChild("Inventory")
+
+	if playerInventoryFrame and playerInventoryFrame.Visible then
+		playerInventoryFrame.Visible = false
+	end
+
+	if businessStorageFrame then
+		businessStorageFrame.Visible = true
+		storageOpen = true
+		local playerInventory = RequestDataEvent:Invoke(player, "Inventory")
+		local playerStorage = RequestDataEvent:Invoke(player, "Storage") or {}
+
+		-- Debug Output
+		print("Opening storage UI with data:")
+		print("Inventory:", playerInventory)
+		print("Storage:", playerStorage)
+
+		UpdateStorageUIEvent:FireClient(player, { Inventory = playerInventory, Storage = playerStorage })
+	else
+		warn("BusinessStorage frame not found in Menues")
+	end
+end
+
+-- Function to close the storage UI
+local function CloseStorageUI(player)
+	local playerGui = player:FindFirstChild("PlayerGui")
+	local menusFolder = playerGui and playerGui:FindFirstChild("Menues")
+	local businessStorageFrame = menusFolder and menusFolder:FindFirstChild("BusinessStorage")
+
+	if businessStorageFrame then
+		businessStorageFrame.Visible = false
+		storageOpen = false
+	end
+end
+
+-- Function to start monitoring player distance and close the UI on next move after exceeding distance
+local function MonitorPlayerDistance(player)
+	local hasExitedRange = false
+	local connection
+	connection = RunService.Heartbeat:Connect(function()
+		if player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
+			local distance = (player.Character.HumanoidRootPart.Position - StoragePart.Position).Magnitude
+			if distance > MaxDistance then
+				if not hasExitedRange then
+					hasExitedRange = true
+				elseif hasExitedRange then
+					CloseStorageUI(player)
+					connection:Disconnect()
+				end
+			else
+				hasExitedRange = false
+			end
+		end
+	end)
+end
+
+-- Open or close storage when ProximityPrompt is triggered based on current visibility
+StoragePart.ProximityPrompt.Triggered:Connect(function(player)
+	local playerGui = player:FindFirstChild("PlayerGui")
+	local menusFolder = playerGui and playerGui:FindFirstChild("Menues")
+	local businessStorageFrame = menusFolder and menusFolder:FindFirstChild("BusinessStorage")
+
+	if businessStorageFrame then
+		if businessStorageFrame.Visible then
+			CloseStorageUI(player)
+		else
+			OpenStorageUI(player)
+			MonitorPlayerDistance(player)
+		end
+	else
+		warn("BusinessStorage frame not found in Menues")
+	end
+end)
+
+-- Function to add an item to storage
+local function AddItemToStorage(Player, ItemName, Amount)
+	local PlayerInventory = RequestDataEvent:Invoke(Player, "Inventory")
+	local PlayerStorage = RequestDataEvent:Invoke(Player, "Storage") or {}
+
+	if GetAmount(PlayerInventory, ItemName) < Amount then
+		MessageEvent:FireClient(Player, "Not enough items in your inventory!", Color3.new(1, 0, 0), 2)
+		return
+	end
+
+	if #PlayerStorage + Amount > MaxStorageSpace then
+		MessageEvent:FireClient(Player, "Not enough space in storage!", Color3.new(1, 0, 0), 2)
+		return
+	end
+
+	for i = 1, Amount do
+		local index = table.find(PlayerInventory, ItemName)
+		if index then
+			table.remove(PlayerInventory, index)
+		end
+		table.insert(PlayerStorage, ItemName)
+	end
+
+	ModifyDataEvent:Invoke(Player, "UPDATE", "Inventory", PlayerInventory)
+	ModifyDataEvent:Invoke(Player, "UPDATE", "Storage", PlayerStorage)
+
+	-- Save updated data
+	SavePlayerData(Player, PlayerInventory, PlayerStorage)
+
+	-- Debug Output
+	print("Updated Inventory after adding to storage:", PlayerInventory)
+	print("Updated Storage after adding item:", PlayerStorage)
+
+	UpdateStorageUIEvent:FireClient(Player, { Inventory = PlayerInventory, Storage = PlayerStorage })
+	MessageEvent:FireClient(Player, string.format("Put Away x%d %s", Amount, ItemName), Color3.new(1, 0.74902, 0), 2)
+end
+AddToStorageEvent.OnServerEvent:Connect(AddItemToStorage)
+
+-- Function to remove an item from storage
+local function RemoveItemFromStorage(Player, ItemName, Amount)
+	local PlayerStorage = RequestDataEvent:Invoke(Player, "Storage") or {}
+	local PlayerInventory = RequestDataEvent:Invoke(Player, "Inventory")
+	local PlayerBagSpace = Player:GetAttribute("BagSpace")
+
+	if GetAmount(PlayerStorage, ItemName) < Amount then
+		MessageEvent:FireClient(Player, "Not enough items in storage!", Color3.new(1, 0, 0), 2)
+		return
+	end
+
+	if #PlayerInventory + Amount > PlayerBagSpace then
+		MessageEvent:FireClient(Player, "Not enough space in your inventory!", Color3.new(1, 0, 0), 2)
+		return
+	end
+
+	for i = 1, Amount do
+		local index = table.find(PlayerStorage, ItemName)
+		if index then
+			table.remove(PlayerStorage, index)
+		end
+		table.insert(PlayerInventory, ItemName)
+	end
+
+	ModifyDataEvent:Invoke(Player, "UPDATE", "Storage", PlayerStorage)
+	ModifyDataEvent:Invoke(Player, "UPDATE", "Inventory", PlayerInventory)
+
+	-- Save updated data
+	SavePlayerData(Player, PlayerInventory, PlayerStorage)
+
+	-- Debug Output
+	print("Updated Storage after removing item:", PlayerStorage)
+	print("Updated Inventory after removing from storage:", PlayerInventory)
+
+	UpdateStorageUIEvent:FireClient(Player, { Inventory = PlayerInventory, Storage = PlayerStorage })
+	MessageEvent:FireClient(Player, string.format("Took x%d %s", Amount, ItemName), Color3.new(1, 0.74902, 0), 2)
+end
+RemoveFromStorageEvent.OnServerEvent:Connect(RemoveItemFromStorage)
