@@ -13,6 +13,7 @@ local StoragePart = game.Workspace.FirstMap.Cafe.Storage.StoragePart
 
 -- Events
 local Events = MasterFolder.Events
+local UpdateUIEvent = Events.ServerClient.UpdateUI
 local UpdateStorageUIEvent = Events.ServerClient.UpdateStorageUI
 local AddToStorageEvent = Events.ClientServer.AddToStorage
 local RemoveFromStorageEvent = Events.ClientServer.RemoveFromStorage
@@ -42,6 +43,37 @@ local function SavePlayerData(player, inventory, storage)
 	end
 end
 
+-- Load the player's inventory and storage from the DataStore
+local function LoadPlayerData(player)
+	local inventory, storage
+
+	local success, err = pcall(function()
+		inventory = PlayerDataStore:GetAsync(player.UserId .. "_Inventory") or {}
+		storage = PlayerDataStore:GetAsync(player.UserId .. "_Storage") or {}
+	end)
+
+	if success then
+		print("Player data loaded successfully for:", player.Name)
+		-- Update player's inventory and storage on load
+		ModifyDataEvent:Invoke(player, "UPDATE", "Inventory", inventory)
+		ModifyDataEvent:Invoke(player, "UPDATE", "Storage", storage)
+	else
+		warn("Failed to load player data:", err)
+	end
+end
+
+-- Load data when the player joins
+game.Players.PlayerAdded:Connect(function(player)
+	LoadPlayerData(player)
+end)
+
+-- Save data when the player leaves
+game.Players.PlayerRemoving:Connect(function(player)
+	local playerInventory = RequestDataEvent:Invoke(player, "Inventory")
+	local playerStorage = RequestDataEvent:Invoke(player, "Storage") or {}
+	SavePlayerData(player, playerInventory, playerStorage)
+end)
+
 -- Utility function to get the amount of an item in a given inventory
 local function GetAmount(Inventory, ItemName)
 	local Count = 0
@@ -70,7 +102,6 @@ local function OpenStorageUI(player)
 		local playerInventory = RequestDataEvent:Invoke(player, "Inventory")
 		local playerStorage = RequestDataEvent:Invoke(player, "Storage") or {}
 
-		-- Debug Output
 		print("Opening storage UI with data:")
 		print("Inventory:", playerInventory)
 		print("Storage:", playerStorage)
@@ -161,7 +192,6 @@ local function AddItemToStorage(Player, ItemName, Amount)
 	-- Save updated data
 	SavePlayerData(Player, PlayerInventory, PlayerStorage)
 
-	-- Debug Output
 	print("Updated Inventory after adding to storage:", PlayerInventory)
 	print("Updated Storage after adding item:", PlayerStorage)
 
@@ -200,7 +230,6 @@ local function RemoveItemFromStorage(Player, ItemName, Amount)
 	-- Save updated data
 	SavePlayerData(Player, PlayerInventory, PlayerStorage)
 
-	-- Debug Output
 	print("Updated Storage after removing item:", PlayerStorage)
 	print("Updated Inventory after removing from storage:", PlayerInventory)
 
