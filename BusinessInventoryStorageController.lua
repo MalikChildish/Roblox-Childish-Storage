@@ -4,8 +4,8 @@
 local Player = game.Players.LocalPlayer
 
 -- References to UI elements within BusinessInventoryStorage
-local StorageSlots = script.Parent.InventorySlots
-local InfoPanel = script.Parent.InfoPanel
+local StorageSlots = Player:WaitForChild("PlayerGui"):WaitForChild("Menues"):WaitForChild("BusinessStorage"):WaitForChild("BusinessInventoryStorage"):WaitForChild("InventorySlots")
+local InfoPanel = script.Parent:WaitForChild("InfoPanel")
 local TakeButton = InfoPanel:WaitForChild("TakeButton")
 local NextArrow = script.Parent:WaitForChild("NextArrow")
 local PreviousArrow = script.Parent:WaitForChild("PreviousArrow")
@@ -118,9 +118,8 @@ PreviousArrow.MouseButton1Click:Connect(function()
 	end
 end)
 
--- Loading data from server specifically for BusinessInventory
 LoadPlayerDataEvent.OnClientEvent:Connect(function(data)
-	UpdateStorageItems(data.BusinessInventory or {}) -- Ensure we're only loading BusinessInventory data
+	UpdateStorageItems(data.BusinessInventory or {})
 	UpdateSpaceCount()
 end)
 
