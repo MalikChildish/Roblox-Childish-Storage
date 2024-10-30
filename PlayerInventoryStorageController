@@ -20,6 +20,7 @@ local ItemDB = require(MasterFolder.Modules.ItemData)
 local Events = MasterFolder.Events
 local UpdateStorageUIEvent = Events.ServerClient.UpdateStorageUI
 local AddToStorageEvent = Events.ClientServer.AddToStorage
+local LoadPlayerDataEvent = game.ReplicatedStorage.PlayerDataSystem.Events.ServerClient.LoadData
 
 -- Static
 local SlotCount = 9
@@ -30,140 +31,117 @@ local CurrentPages = {}
 local CurrentSelectedPage = 1
 local CurrentSelectedItem = nil
 
--- Set InfoPanel initially to be hidden
 InfoPanel.Visible = false
 
--- Function to paginate inventory items
 local function GetPages(items)
-    local pages = {}
-    local currentPage = 1
-
-    for i, item in ipairs(items) do
-        if not pages[currentPage] then
-            pages[currentPage] = {}
-        end
-
-        if #pages[currentPage] < SlotCount then
-            table.insert(pages[currentPage], item)
-        end
-
-        if #pages[currentPage] >= SlotCount then
-            currentPage += 1
-        end
-    end
-    return pages
+	local pages = {}
+	local currentPage = 1
+	for i, item in ipairs(items) do
+		if not pages[currentPage] then
+			pages[currentPage] = {}
+		end
+		if #pages[currentPage] < SlotCount then
+			table.insert(pages[currentPage], item)
+		end
+		if #pages[currentPage] >= SlotCount then
+			currentPage += 1
+		end
+	end
+	return pages
 end
 
--- Function to update inventory display based on the current page
 local function UpdateInventoryDisplay()
-    local page = CurrentPages[CurrentSelectedPage] or {}
-
-    for i, slot in ipairs(InventorySlots:GetChildren()) do
-        slot:SetAttribute("CurrentItem", nil)
-        slot.Image = ""
-        slot.ImageColor3 = Color3.new(1, 1, 1)
-
-        local itemName = page[i]
-        if itemName then
-            local itemInfo = ItemDB.Items[itemName]
-            if itemInfo then
-                slot:SetAttribute("CurrentItem", itemName)
-                slot.Image = itemInfo.Image
-            end
-        end
-    end
-    PageIndicator.Text = string.format("Page %d of %d", CurrentSelectedPage, #CurrentPages)
+	local page = CurrentPages[CurrentSelectedPage] or {}
+	for i, slot in ipairs(InventorySlots:GetChildren()) do
+		slot:SetAttribute("CurrentItem", nil)
+		slot.Image = ""
+		slot.ImageColor3 = Color3.new(1, 1, 1)
+		local itemName = page[i]
+		if itemName then
+			local itemInfo = ItemDB.Items[itemName]
+			if itemInfo then
+				slot:SetAttribute("CurrentItem", itemName)
+				slot.Image = itemInfo.Image
+			end
+		end
+	end
+	PageIndicator.Text = string.format("Page %d of %d", CurrentSelectedPage, #CurrentPages)
+	print("Inventory UI updated on client with new items.") -- Debug statement
 end
 
--- Function to update inventory items and display
 local function UpdateInventoryItems(items)
-    CurrentInventoryItems = items
-    CurrentPages = GetPages(items)
-    CurrentSelectedPage = 1
-    UpdateInventoryDisplay()
+	CurrentInventoryItems = items
+	CurrentPages = GetPages(items)
+	CurrentSelectedPage = 1
+	UpdateInventoryDisplay()
 end
 
--- Update space count display
 local function UpdateSpaceCount()
-    local playerBagSpace = Player:GetAttribute("BagSpace") or 0
-    SpaceCount.Text = string.format("%d / %d", #CurrentInventoryItems, playerBagSpace)
+	local playerBagSpace = Player:GetAttribute("BagSpace") or 0
+	SpaceCount.Text = string.format("%d / %d", #CurrentInventoryItems, playerBagSpace)
 end
 
 Player:GetAttributeChangedSignal("BagSpace"):Connect(UpdateSpaceCount)
 
--- Update the info panel for the selected item
 local function UpdateInfoPanel(selectedSlot)
-    if CurrentSelectedItem then
-        CurrentSelectedItem.ImageColor3 = Color3.new(1, 1, 1)
-    end
-
-    CurrentSelectedItem = selectedSlot
-
-    if CurrentSelectedItem then
-        CurrentSelectedItem.ImageColor3 = Color3.new(1, 0, 0.0156863) -- Highlight selected item in red
-        local itemName = CurrentSelectedItem:GetAttribute("CurrentItem")
-        
-        if itemName then
-            local itemInfo = ItemDB.Items[itemName]
-            InfoPanel.Visible = true -- Make InfoPanel visible only when an item is selected
-            InfoItemName.Text = itemName
-            InfoDescription.Text = itemInfo.Description or "No Description Available"
-            
-            -- Customize description based on item type
-            if itemInfo.Type == "Wearable" then
-                InfoDescription.Text = string.format("<i>%s</i>\n<b><br />Health: %d<br />Speed: %d</b>", itemInfo.Description, itemInfo.Health or 0, itemInfo.Speed or 0)
-            elseif itemInfo.Type == "Tool" then
-                InfoDescription.Text = string.format("<i>%s</i>\n<b><br />Damage: %d</b>", itemInfo.Description, itemInfo.Damage or 0)
-            elseif itemInfo.Type == "Food" then
-                InfoDescription.Text = string.format("<i>%s</i>\n<b><br />+%d Health</b>", itemInfo.Description, itemInfo.HealthAmount or 0)
-            elseif itemInfo.Type == "Drink" then
-                InfoDescription.Text = string.format("<i>%s</i>\n<b><br />+%d Speed<br />Duration: %d seconds</b>", itemInfo.Description, itemInfo.SpeedBoost or 0, itemInfo.EffectDuration or 0)
-            end
-
-            -- Make sure PutAwayButton is visible for interaction
-            PutAwayButton.Visible = true
-        else
-            InfoPanel.Visible = false
-        end
-    else
-        InfoPanel.Visible = false
-    end
+	if CurrentSelectedItem then
+		CurrentSelectedItem.ImageColor3 = Color3.new(1, 1, 1)
+	end
+	CurrentSelectedItem = selectedSlot
+	if CurrentSelectedItem then
+		CurrentSelectedItem.ImageColor3 = Color3.new(1, 0, 0.0156863)
+		local itemName = CurrentSelectedItem:GetAttribute("CurrentItem")
+		if itemName then
+			local itemInfo = ItemDB.Items[itemName]
+			InfoPanel.Visible = true
+			InfoItemName.Text = itemName
+			InfoDescription.Text = itemInfo.Description or "No Description Available"
+			PutAwayButton.Visible = true
+		else
+			InfoPanel.Visible = false
+		end
+	else
+		InfoPanel.Visible = false
+	end
 end
 
--- Handle page navigation
 NextArrow.MouseButton1Click:Connect(function()
-    if CurrentPages[CurrentSelectedPage + 1] then
-        CurrentSelectedPage += 1
-        UpdateInventoryDisplay()
-        UpdateInfoPanel(nil) -- Clear selection when page changes
-    end
+	if CurrentPages[CurrentSelectedPage + 1] then
+		CurrentSelectedPage += 1
+		UpdateInventoryDisplay()
+		UpdateInfoPanel(nil)
+	end
 end)
 
 PreviousArrow.MouseButton1Click:Connect(function()
-    if CurrentSelectedPage > 1 then
-        CurrentSelectedPage -= 1
-        UpdateInventoryDisplay()
-        UpdateInfoPanel(nil) -- Clear selection when page changes
-    end
+	if CurrentSelectedPage > 1 then
+		CurrentSelectedPage -= 1
+		UpdateInventoryDisplay()
+		UpdateInfoPanel(nil)
+	end
 end)
 
--- Load and display inventory data from server
+LoadPlayerDataEvent.OnClientEvent:Connect(function(data)
+	UpdateInventoryItems(data.Inventory or {})
+	UpdateSpaceCount()
+end)
+
 UpdateStorageUIEvent.OnClientEvent:Connect(function(data)
-    UpdateInventoryItems(data.Inventory or {})
-    UpdateSpaceCount()
+	UpdateInventoryItems(data.Inventory or {})
+	UpdateSpaceCount()
+	print("Received updated inventory from server.") -- Debug statement
 end)
 
--- Handle item selection and display item info in the InfoPanel
 for _, slot in ipairs(InventorySlots:GetChildren()) do
-    slot.MouseButton1Click:Connect(function()
-        UpdateInfoPanel(slot)
-    end)
+	slot.MouseButton1Click:Connect(function()
+		UpdateInfoPanel(slot)
+	end)
 end
 
--- Handle "Put Away" button click
 PutAwayButton.MouseButton1Click:Connect(function()
-    if CurrentSelectedItem and CurrentSelectedItem:GetAttribute("CurrentItem") then
-        local selectedItemName = CurrentSelectedItem:GetAttribute("CurrentItem")
-        AddToStorageEvent:FireServer(selectedItemName, 1)
-    end
+	if CurrentSelectedItem and CurrentSelectedItem:GetAttribute("CurrentItem") then
+		local selectedItemName = CurrentSelectedItem:GetAttribute("CurrentItem")
+		AddToStorageEvent:FireServer(selectedItemName, 1)
+		InfoPanel.Visible = false
+	end
 end)
