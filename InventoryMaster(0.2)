@@ -1,0 +1,340 @@
+-- InventoryMaster.lua
+-- Malik Allen LLC, Roblox Studio Pro GPT
+
+local MasterFolder = game.ReplicatedStorage.InventorySystem
+local DropBoxPrefab = MasterFolder.Prefab.DroppedBox
+
+-- Services
+local Debris = game:GetService("Debris")
+local DataStoreService = game:GetService("DataStoreService")
+local PlayerDataStore = DataStoreService:GetDataStore("PlayerData")
+
+-- Events
+local Events = MasterFolder.Events
+local UpdateUIEvent = Events.ServerClient.UpdateUI
+local CollectBoxEvent = Events.ServerServer.CollectBox
+local DropItemsEvent = Events.ClientServer.DropItem
+local AddItemsEvent = Events.ServerServer.AddItems
+local EquipItemsEvent = Events.ClientServer.EquipItem
+local UnequipItemsEvent = Events.ClientServer.UnequipItem
+local SelectToolBarEvent = Events.ClientServer.SelectToolBarSlot
+local AddToToolBarEvent = Events.ClientServer.AddToToolBar
+local UnequipToolBarEvent = Events.ClientServer.UnequipToolBar
+
+local RequestDataEvent = game.ReplicatedStorage.PlayerDataSystem.Events.ServerServer.RequestPlayerData
+local ModifyDataEvent = game.ReplicatedStorage.PlayerDataSystem.Events.ServerServer.ModifyPlayerData
+
+local MessageEvent = game.ReplicatedStorage.NotificationSystem.Events.ServerClient.SendMessage
+
+-- Modules
+local ItemDB = require(MasterFolder.Modules.ItemData)
+
+-- Static
+local DroppedItemDestroyTime = 120
+local MaxToolBarSlots = 9
+
+local function DebugPrintInventory(Player, Inventory)
+	print("Updated Inventory for player:", Player.Name)
+	for index, item in ipairs(Inventory) do
+		print(index, ":", item)
+	end
+end
+
+function AddItem(Player:Player, ItemName, Amount, CheckForSpace, PreDefinedInventory, DoAnnounce)
+	local PlayerInventory = PreDefinedInventory or RequestDataEvent:Invoke(Player, "Inventory")
+	local PlayerBagSpace = Player:GetAttribute("BagSpace")
+
+	if not ItemDB.Items[ItemName] then
+		MessageEvent:FireClient(Player, "Unknown Item!", Color3.new(1, 0, 0), 2)
+		return false
+	end
+
+	if CheckForSpace and #PlayerInventory + Amount >= PlayerBagSpace then
+		MessageEvent:FireClient(Player, "Not Enough Bag Space!", Color3.new(1, 0, 0), 2)
+		return false
+	end
+
+	local CommandsTable = table.create(Amount, "ADD")
+	local KeyWordsTable = table.create(Amount, "Inventory")
+	local ItemsTable = table.create(Amount, ItemName)
+
+	ModifyDataEvent:Invoke(Player, CommandsTable, KeyWordsTable, ItemsTable)
+
+	if DoAnnounce == true then 
+		MessageEvent:FireClient(Player, `Added x{Amount} {ItemName}s`, Color3.new(1, 0.74902, 0), 2)
+	end
+	UpdateUIEvent:FireClient(Player, RequestDataEvent:Invoke(Player, "Inventory"))
+	DebugPrintInventory(Player, RequestDataEvent:Invoke(Player, "Inventory")) -- Debugging
+end
+AddItemsEvent.Event:Connect(AddItem)
+
+function GetAmount(Inventory, ItemName)
+	local Count = 0
+	for _, Item in ipairs(Inventory) do
+		if Item == ItemName then
+			Count += 1
+		end
+	end
+	return Count
+end
+
+function DropItem(Player:Player, ItemName, Amount)
+	if not ItemDB.Items[ItemName] then
+		MessageEvent:FireClient(Player, "Unknown Item!", Color3.new(1, 0, 0), 2)
+		return false
+	end
+
+	local PlayerInventory = RequestDataEvent:Invoke(Player, "Inventory")
+
+	if GetAmount(PlayerInventory, ItemName) < Amount then
+		MessageEvent:FireClient(Player, "Not Enough Items!", Color3.new(1, 0, 0), 2)
+		return
+	end
+
+	local PlayerCharacter = Player.Character
+
+	if not PlayerCharacter then
+		MessageEvent:FireClient(Player, "You Need To Be Alive To Drop Items!", Color3.new(1, 0, 0), 2)
+		return
+	end
+	local Removed = 0
+
+	pcall(function()
+		while Removed < Amount do
+			if not Player then return end
+			for i, Item in ipairs(PlayerInventory) do
+				if Item == ItemName then
+					Removed += 1
+					table.remove(PlayerInventory, i)
+					break
+				end
+			end
+		end
+	end)
+
+	ModifyDataEvent:Invoke(Player, "UPDATE", "Inventory", PlayerInventory)
+
+	local NewBox = DropBoxPrefab:Clone()
+	NewBox:SetAttribute("ItemName", ItemName)
+	NewBox:SetAttribute("Amount", Amount)
+	NewBox.Display.ItemImage.Image = ItemDB.Items[ItemName]["Image"]
+	NewBox.Display.AmountLabel.Text = `x{Amount}`
+
+	local ParentFolder = workspace:FindFirstChild("DroppedItems")
+	if not ParentFolder then
+		ParentFolder = Instance.new("Folder", workspace)
+		ParentFolder.Name = "DroppedItems"
+	end
+	NewBox.Parent = ParentFolder
+
+	Debris:AddItem(NewBox, DroppedItemDestroyTime)
+
+	NewBox:PivotTo(PlayerCharacter:GetPivot() * CFrame.new(3, 0, 0))
+	MessageEvent:FireClient(Player, `Dropped x{Amount} {ItemName}s!`, Color3.new(1, 0, 0.0156863), 5)
+	UpdateUIEvent:FireClient(Player, RequestDataEvent:Invoke(Player, "Inventory"))
+	UpdateToolBar(Player, ItemName)
+end
+DropItemsEvent.OnServerEvent:Connect(DropItem)
+
+function CollectBox(Player:Player, Box:Part)
+	local PlayerInventory = RequestDataEvent:Invoke(Player, "Inventory")
+	local PlayerBagSpace = Player:GetAttribute("BagSpace")
+
+	local FreeSpace = PlayerBagSpace - #PlayerInventory
+
+	if FreeSpace <= 0 then
+		MessageEvent:FireClient(Player, "Not Enough Bag Space!", Color3.new(1, 0, 0), 2)
+		return
+	end
+
+	local BoxAmount = Box:GetAttribute("Amount") or 0
+	local BoxItemName = Box:GetAttribute("ItemName")
+
+	if FreeSpace >= BoxAmount then
+		Box:Destroy()
+		AddItem(Player, BoxItemName, BoxAmount, true, PlayerInventory, false)
+		MessageEvent:FireClient(Player, `Collected x{BoxAmount} {BoxItemName}s From A Box!`, Color3.new(1, 0.74902, 0), 2)
+	else
+		Box:SetAttribute("Amount", BoxAmount - FreeSpace)
+		AddItem(Player, BoxItemName, FreeSpace, true, PlayerInventory, false)
+		MessageEvent:FireClient(Player, `Collected x{FreeSpace} {BoxItemName}s From A Box!`, Color3.new(1, 0.74902, 0), 2)
+	end
+end
+CollectBoxEvent.Event:Connect(CollectBox)
+
+function ConsumeFood(Player:Player, ItemName, PlayerInventory)
+	local ItemInfo = ItemDB.Items[ItemName]
+	local HealthValue = ItemInfo["HealthAmount"]
+	local Character = Player.Character
+	if not Character or not Character:FindFirstChild("Humanoid") then return end
+	local Humanoid:Humanoid = Character:FindFirstChild("Humanoid")
+
+	if Humanoid.Health == Humanoid.MaxHealth then
+		MessageEvent:FireClient(Player, "Your Health Is Already Full!", Color3.new(1, 0, 0), 2)
+		return
+	end
+
+	table.remove(PlayerInventory, table.find(PlayerInventory, ItemName))
+	ModifyDataEvent:Invoke(Player, "REMOVE", "Inventory", ItemName)
+	Humanoid.Health += HealthValue
+	MessageEvent:FireClient(Player, `Consumed {ItemName}! +{HealthValue} Health`, Color3.new(0.101961, 1, 0), 5)
+	UpdateUIEvent:FireClient(Player, PlayerInventory)
+end
+
+function EquipItem(Player:Player, ItemName)
+	local PlayerInventory = RequestDataEvent:Invoke(Player, "Inventory")
+	if GetAmount(PlayerInventory, ItemName) <= 0 then
+		MessageEvent:FireClient(Player, "You Don't Have That Item!", Color3.new(1, 0, 0), 2)
+		return
+	end
+
+	local ItemInfo = ItemDB.Items[ItemName]
+
+	if not ItemInfo then
+		MessageEvent:FireClient(Player, "Unknown Item!", Color3.new(1, 0, 0), 2)
+		return false
+	end
+
+	if ItemInfo["Type"] == "Food" then
+		ConsumeFood(Player, ItemName, PlayerInventory)
+		return
+	elseif ItemInfo["Type"] ~= "Wearable" then
+		MessageEvent:FireClient(Player, "You Can't Equip This Item!", Color3.new(1, 0, 0), 2)
+		return
+	end
+
+	local ItemSlot = ItemInfo["Slot"]
+
+	local CurrentItem = Player:GetAttribute(string.format("%sItem", ItemSlot))
+
+	if CurrentItem == ItemName then
+		MessageEvent:FireClient(Player, "Already Equipped!", Color3.new(1, 0, 0), 2)
+		return
+	end
+
+	for i, Item in ipairs(PlayerInventory) do
+		if Item == ItemName then
+			table.remove(PlayerInventory, i)
+			break
+		end
+	end
+
+	if CurrentItem ~= "" or not CurrentItem then
+		table.insert(PlayerInventory, CurrentItem)
+	end
+	ModifyDataEvent:Invoke(Player, {"UPDATE", "UPDATE"}, {"Inventory", string.format("%sItem", ItemSlot)}, {PlayerInventory, ItemName})
+	UpdateUIEvent:FireClient(Player, RequestDataEvent:Invoke(Player, "Inventory"))
+	MessageEvent:FireClient(Player, string.format("Equipped %s!", ItemName), Color3.new(1, 0.74902, 0), 3)
+	UpdateToolBar(Player, ItemName)
+end
+EquipItemsEvent.OnServerEvent:Connect(EquipItem)
+
+function UnequipItem(Player:Player, Slot)
+	local CurrentItem = Player:GetAttribute(string.format("%sItem", Slot))
+	if not CurrentItem or CurrentItem == "" then
+		MessageEvent:FireClient(Player, "Nothing To Unequip!", Color3.new(1, 0, 0), 2)
+		return
+	end
+
+	local PlayerInventory = RequestDataEvent:Invoke(Player, "Inventory")
+	local PlayerBagSpace = Player:GetAttribute("BagSpace")
+
+	if #PlayerInventory >= PlayerBagSpace then
+		MessageEvent:FireClient(Player, "Not Enough Space In Your Bag To Unequip This!", Color3.new(1, 0, 0), 2)
+		return
+	end
+
+	ModifyDataEvent:Invoke(Player, {"ADD", "UPDATE"}, {"Inventory", string.format("%sItem", Slot)}, {CurrentItem, ""})
+	UpdateUIEvent:FireClient(Player, RequestDataEvent:Invoke(Player, "Inventory"))
+	MessageEvent:FireClient(Player, string.format("Unequipped %s!", CurrentItem), Color3.new(1, 0.74902, 0), 3)
+	UpdateToolBar(Player, CurrentItem)
+end
+UnequipItemsEvent.OnServerEvent:Connect(UnequipItem)
+
+function SelectedToolBarChange(Player:Player, Ind)
+	local CurrentInd = Player:GetAttribute("SelectedToolBarSlot")
+	if CurrentInd == Ind then
+		return
+	end
+
+	ModifyDataEvent:Invoke(Player, "UPDATE", "SelectedToolBarSlot", Ind)
+end
+SelectToolBarEvent.OnServerEvent:Connect(SelectedToolBarChange)
+
+function UpdateToolBar(Player:Player, RemovedItem)
+	for i = 1, MaxToolBarSlots do
+		if Player:GetAttribute(string.format("ToolBar%d", i)) == RemovedItem then
+			ModifyDataEvent:Invoke(Player, "UPDATE", string.format("ToolBar%d", i), "")
+		end
+	end
+end
+
+function AddToToolBar(Player:Player, CurrentItem, ToSlot)
+	if not CurrentItem or CurrentItem == "" then return end
+
+	if Player:GetAttribute(string.format("ToolBar%d", ToSlot)) == CurrentItem then
+		MessageEvent:FireClient(Player, "Already Equipped!", Color3.new(1, 0, 0), 2)
+		return
+	end
+
+	local ItemInfo = ItemDB.Items[CurrentItem]
+	if not ItemInfo then return end
+
+	ModifyDataEvent:Invoke(Player, "UPDATE", string.format("ToolBar%d", ToSlot), CurrentItem)
+end
+AddToToolBarEvent.OnServerEvent:Connect(AddToToolBar)
+
+UnequipToolBarEvent.OnServerEvent:Connect(function(player, slotName)
+	local currentItem = player:GetAttribute("ToolBar" .. slotName)
+	if currentItem and currentItem ~= "" then
+		local PlayerInventory = RequestDataEvent:Invoke(player, "Inventory")
+		local PlayerBagSpace = player:GetAttribute("BagSpace")
+
+		if #PlayerInventory >= PlayerBagSpace then
+			MessageEvent:FireClient(player, "Not Enough Space In Your Bag To Unequip This!", Color3.new(1, 0, 0), 2)
+			return
+		end
+
+		table.insert(PlayerInventory, currentItem)
+		ModifyDataEvent:Invoke(player, {"UPDATE", "ADD"}, {"ToolBar" .. slotName, "Inventory"}, {"", currentItem})
+		UpdateUIEvent:FireClient(player, RequestDataEvent:Invoke(player, "Inventory"))
+	end
+end)
+
+game.Players.PlayerAdded:Connect(function(player)
+	local data
+	local success, err = pcall(function()
+		data = PlayerDataStore:GetAsync(player.UserId)
+	end)
+
+	if success and data then
+		-- Load player data
+		for i = 1, MaxToolBarSlots do
+			player:SetAttribute("ToolBar" .. i, data["ToolBar" .. i] or "")
+		end
+		player:SetAttribute("SelectedToolBarSlot", data.SelectedToolBarSlot or 1)
+	else
+		warn("Failed to load data for player: " .. err)
+		-- Initialize toolbar slots with default values if data doesn't exist
+		for i = 1, MaxToolBarSlots do
+			player:SetAttribute("ToolBar" .. i, "")
+		end
+		player:SetAttribute("SelectedToolBarSlot", 1)
+	end
+end)
+
+game.Players.PlayerRemoving:Connect(function(player)
+	local data = {}
+	for i = 1, MaxToolBarSlots do
+		data["ToolBar" .. i] = player:GetAttribute("ToolBar" .. i)
+	end
+	data.SelectedToolBarSlot = player:GetAttribute("SelectedToolBarSlot")
+
+	local success, err = pcall(function()
+		PlayerDataStore:SetAsync(player.UserId, data)
+	end)
+
+	if not success then
+		warn("Failed to save data for player: " .. err)
+	end
+end)
